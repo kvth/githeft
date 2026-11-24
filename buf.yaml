@@ -1,0 +1,15 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Shared message types (Note, Notebook, SshKey, SyncStatus) as responses
+    # read better than a wrapper per RPC.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
+    - SERVICE_SUFFIX
+breaking:
+  use:
+    - FILE

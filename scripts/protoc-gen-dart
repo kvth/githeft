@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# protoc-gen-dart from the toolchain container, for buf on the host
+# (buf.gen.dart.yaml): the plugin reads the request on stdin and writes the
+# response to stdout.
+exec podman run --rm -i localhost/githeft-toolchain protoc-gen-dart "$@"

@@ -1,0 +1,535 @@
+syntax = "proto3";
+
+package githeft.v1;
+
+option go_package = "github.com/kvth/githeft/gen/githeft/v1;githeftv1";
+
+// Githeft is the API between the Flutter app and the Go core. On Android and
+// Linux the core runs inside the app process and listens on a Unix socket in
+// the app's private directory; the web version talks gRPC-Web to `githeft
+// serve`.
+service Githeft {
+  // Notebooks: one git repository each.
+  rpc ListNotebooks(ListNotebooksRequest) returns (ListNotebooksResponse);
+  rpc CreateNotebook(CreateNotebookRequest) returns (Notebook);
+  rpc UpdateNotebook(UpdateNotebookRequest) returns (Notebook);
+  rpc DeleteNotebook(DeleteNotebookRequest) returns (DeleteNotebookResponse);
+
+  // Remotes and credentials.
+  rpc GenerateSshKey(GenerateSshKeyRequest) returns (SshKey);
+  rpc ImportSshKey(ImportSshKeyRequest) returns (SshKey);
+  rpc GetSshKey(GetSshKeyRequest) returns (SshKey);
+  // Checks that the remote can be reached with the given credentials, the way
+  // `git ls-remote` does, before a clone or after changing the remote.
+  rpc TestRemote(TestRemoteRequest) returns (TestRemoteResponse);
+  // Drops the remembered SSH host key of a host, after it legitimately changed.
+  rpc ForgetHostKey(ForgetHostKeyRequest) returns (ForgetHostKeyResponse);
+
+  // Notes and folders.
+  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
+  rpc GetNote(GetNoteRequest) returns (Note);
+  rpc SaveNote(SaveNoteRequest) returns (SaveNoteResponse);
+  rpc RenameNote(RenameNoteRequest) returns (Note);
+  rpc DeleteNote(DeleteNoteRequest) returns (DeleteNoteResponse);
+  rpc CreateFolder(CreateFolderRequest) returns (CreateFolderResponse);
+  rpc ListTags(ListTagsRequest) returns (ListTagsResponse);
+  // Pins a note or changes its editor type, stored in the front matter like
+  // GitJournal does (pinned: true, type: Checklist).
+  rpc UpdateNoteMeta(UpdateNoteMetaRequest) returns (Note);
+
+  // Images and other files next to the notes.
+  rpc AddAttachment(AddAttachmentRequest) returns (AddAttachmentResponse);
+  rpc GetFile(GetFileRequest) returns (GetFileResponse);
+
+  // Links between notes: [[wiki links]] and relative Markdown links.
+  rpc ResolveLink(ResolveLinkRequest) returns (ResolveLinkResponse);
+  rpc GetBacklinks(GetBacklinksRequest) returns (GetBacklinksResponse);
+
+  // Setting up a notebook on GitHub, GitLab or a Gitea/Forgejo host
+  // (Codeberg): sign in, pick or create a repository, add a deploy key.
+  rpc HostInfo(HostInfoRequest) returns (HostInfoResponse);
+  rpc HostLoginStart(HostLoginStartRequest) returns (HostLoginStartResponse);
+  rpc HostLoginPoll(HostLoginPollRequest) returns (HostLoginPollResponse);
+  rpc HostListRepos(HostListReposRequest) returns (HostListReposResponse);
+  rpc HostCreateRepo(HostCreateRepoRequest) returns (HostRepo);
+  rpc HostAddDeployKey(HostAddDeployKeyRequest) returns (HostAddDeployKeyResponse);
+
+  // Sync: commit, fetch, merge and push.
+  rpc Sync(SyncRequest) returns (SyncStatus);
+  rpc GetSyncStatus(GetSyncStatusRequest) returns (SyncStatus);
+  // Syncs every notebook that has automatic sync on, as the background job
+  // does.
+  rpc SyncAll(SyncAllRequest) returns (SyncAllResponse);
+}
+
+enum AuthType {
+  AUTH_TYPE_UNSPECIFIED = 0;
+  AUTH_TYPE_NONE = 1;
+  AUTH_TYPE_SSH = 2;
+  AUTH_TYPE_HTTPS = 3;
+}
+
+message Remote {
+  // Clone URL: https://host/user/repo.git, git@host:user/repo.git,
+  // ssh://git@host:port/user/repo.git or file:///path.
+  string url = 1;
+  AuthType auth_type = 2;
+  // AUTH_TYPE_SSH: the key from GenerateSshKey or ImportSshKey.
+  string ssh_key_id = 3;
+  // AUTH_TYPE_HTTPS: user name and password or access token. Responses
+  // never contain the password; password_stored tells whether one is stored.
+  string username = 4;
+  string password = 5;
+  bool password_stored = 6;
+  // Branch to sync; empty means the remote's default branch.
+  string branch = 7;
+}
+
+message Author {
+  string name = 1;
+  string email = 2;
+}
+
+message Notebook {
+  string id = 1;
+  string name = 2;
+  // Absolute path of the working tree.
+  string path = 3;
+  // Unset for a notebook that only lives on this device.
+  Remote remote = 4;
+  Author author = 5;
+  // Sync after every change and when the app starts.
+  bool auto_sync = 6;
+  // File name for new notes: NEW_NOTE_NAME_*.
+  NewNoteName new_note_name = 7;
+  // Folder new notes go into, relative to the notebook root.
+  string default_folder = 8;
+}
+
+enum NewNoteName {
+  NEW_NOTE_NAME_UNSPECIFIED = 0;
+  // From the first heading or line, falling back to the date.
+  NEW_NOTE_NAME_TITLE = 1;
+  // 20260826T192720.md
+  NEW_NOTE_NAME_DATE_TIME = 2;
+}
+
+message ListNotebooksRequest {}
+
+message ListNotebooksResponse {
+  repeated Notebook notebooks = 1;
+}
+
+message CreateNotebookRequest {
+  string name = 1;
+  oneof source {
+    // An empty repository in the app's storage, optionally with a remote to
+    // push to later.
+    bool empty = 2;
+    // Clone this remote into the app's storage.
+    Remote clone_remote = 3;
+    // Use an existing git working tree, e.g. in Android's shared storage
+    // (needs the all-files permission there).
+    string existing_path = 4;
+  }
+  Author author = 5;
+  // Remote for an empty notebook.
+  Remote remote = 6;
+  // For empty and cloned notebooks: put the working tree here instead of the
+  // app's storage, e.g. /storage/emulated/0/Documents/Notes. It must not
+  // exist yet or be empty.
+  string target_path = 7;
+}
+
+message UpdateNotebookRequest {
+  // Fields of notebook replace the stored ones, except that an empty
+  // remote.password keeps the stored password.
+  Notebook notebook = 1;
+}
+
+message DeleteNotebookRequest {
+  string id = 1;
+  // Also delete the working tree. Only done for notebooks in the app's own
+  // storage; an existing folder that was opened is never deleted.
+  bool delete_files = 2;
+}
+
+message DeleteNotebookResponse {}
+
+enum SshKeyType {
+  SSH_KEY_TYPE_UNSPECIFIED = 0;
+  SSH_KEY_TYPE_ED25519 = 1;
+  SSH_KEY_TYPE_RSA = 2;
+}
+
+message SshKey {
+  string id = 1;
+  SshKeyType type = 2;
+  // OpenSSH authorized_keys line, to add as a deploy key on the git host.
+  string public_key = 3;
+  string fingerprint = 4;
+}
+
+message GenerateSshKeyRequest {
+  SshKeyType type = 1;
+  // Ends up as the comment of the public key, e.g. "githeft@phone".
+  string comment = 2;
+}
+
+message ImportSshKeyRequest {
+  // PEM or OpenSSH private key.
+  string private_key = 1;
+  string passphrase = 2;
+}
+
+message GetSshKeyRequest {
+  string id = 1;
+}
+
+message TestRemoteRequest {
+  Remote remote = 1;
+  // Notebook whose stored password to use when remote.password is empty.
+  string notebook_id = 2;
+}
+
+message TestRemoteResponse {
+  // Branches on the remote; empty for an empty repository.
+  repeated string branches = 1;
+  string default_branch = 2;
+}
+
+message ForgetHostKeyRequest {
+  string host = 1;
+}
+
+message ForgetHostKeyResponse {}
+
+message NoteSummary {
+  // Path relative to the notebook root, with forward slashes.
+  string path = 1;
+  string title = 2;
+  // Start of the body, for the list.
+  string excerpt = 3;
+  repeated string tags = 4;
+  // Unix seconds, from the front matter or else the file's modification time.
+  int64 created = 5;
+  int64 modified = 6;
+  // The file still has git conflict markers or is a conflict copy.
+  bool conflict = 7;
+  bool pinned = 8;
+  NoteType type = 9;
+}
+
+// Which editor a note opens in; front matter "type: Checklist" or
+// "type: Journal", as GitJournal writes it.
+enum NoteType {
+  NOTE_TYPE_UNSPECIFIED = 0;
+  NOTE_TYPE_MARKDOWN = 1;
+  NOTE_TYPE_CHECKLIST = 2;
+  // Dated entry without a title, named by date and time.
+  NOTE_TYPE_JOURNAL = 3;
+}
+
+message Folder {
+  string path = 1;
+  int32 note_count = 2;
+}
+
+enum SortOrder {
+  SORT_ORDER_UNSPECIFIED = 0;
+  SORT_ORDER_MODIFIED_DESC = 1;
+  SORT_ORDER_CREATED_DESC = 2;
+  SORT_ORDER_TITLE_ASC = 3;
+  SORT_ORDER_PATH_ASC = 4;
+}
+
+message ListNotesRequest {
+  string notebook_id = 1;
+  // Only notes in this folder ("" is the root).
+  string folder = 2;
+  // Include notes in subfolders.
+  bool recursive = 3;
+  // Case-insensitive search in titles, paths and bodies.
+  string query = 4;
+  // Only notes with this tag.
+  string tag = 5;
+  SortOrder sort = 6;
+}
+
+message ListNotesResponse {
+  repeated NoteSummary notes = 1;
+  // Direct subfolders of the folder, or every folder when recursive.
+  repeated Folder folders = 2;
+}
+
+message Note {
+  NoteSummary summary = 1;
+  // The text below the front matter.
+  string body = 2;
+  // The whole file, front matter included.
+  string raw = 3;
+  // Changes whenever the file changes, to detect edits from a sync while
+  // the note was open.
+  string revision = 4;
+}
+
+message GetNoteRequest {
+  string notebook_id = 1;
+  string path = 2;
+}
+
+message SaveNoteRequest {
+  string notebook_id = 1;
+  // Empty for a new note; the core picks a name in folder.
+  string path = 2;
+  string folder = 3;
+  // New body, or with raw set the whole file.
+  string content = 4;
+  bool raw = 5;
+  // For an existing note: the revision and body the editor started from.
+  // When the file changed in between, the core merges both edits.
+  string base_revision = 6;
+  string base_content = 7;
+  // Replaces the tags in the front matter when set.
+  TagList tags = 8;
+  // For a new note: its editor type. Journal entries are always named by
+  // date and time.
+  NoteType type = 9;
+}
+
+message UpdateNoteMetaRequest {
+  string notebook_id = 1;
+  string path = 2;
+  optional bool pinned = 3;
+  optional NoteType type = 4;
+}
+
+message AddAttachmentRequest {
+  string notebook_id = 1;
+  // The note the file is for; it goes into the note's folder. For a note
+  // that is not saved yet, give its folder instead.
+  string note_path = 2;
+  string folder = 3;
+  // Original name, for the extension; the stored name gets a date.
+  string file_name = 4;
+  bytes data = 5;
+}
+
+message AddAttachmentResponse {
+  // Path in the notebook.
+  string path = 1;
+  // Markdown to insert into the note: ![Image](./name.jpg)
+  string markdown = 2;
+}
+
+message GetFileRequest {
+  string notebook_id = 1;
+  string path = 2;
+}
+
+message GetFileResponse {
+  bytes data = 1;
+  string mime_type = 2;
+}
+
+message ResolveLinkRequest {
+  string notebook_id = 1;
+  // The note the link is in.
+  string from_path = 2;
+  // "[[target]]" without brackets, or the href of a Markdown link.
+  string target = 3;
+}
+
+message ResolveLinkResponse {
+  // Empty when no note matches.
+  string path = 1;
+}
+
+message GetBacklinksRequest {
+  string notebook_id = 1;
+  string path = 2;
+}
+
+message GetBacklinksResponse {
+  repeated NoteSummary notes = 1;
+}
+
+enum HostKind {
+  HOST_KIND_UNSPECIFIED = 0;
+  HOST_KIND_GITHUB = 1;
+  HOST_KIND_GITLAB = 2;
+  // Gitea and Forgejo, e.g. codeberg.org.
+  HOST_KIND_GITEA = 3;
+}
+
+message HostAccount {
+  HostKind kind = 1;
+  // Web address of the host; empty for github.com, gitlab.com and
+  // codeberg.org.
+  string base_url = 2;
+  // Access token, from HostLoginPoll or created by the user.
+  string token = 3;
+}
+
+message HostRepo {
+  // owner/name
+  string full_name = 1;
+  string ssh_url = 2;
+  string https_url = 3;
+  bool private = 4;
+  string description = 5;
+  // Unix seconds.
+  int64 updated = 6;
+}
+
+message HostInfoRequest {
+  HostKind kind = 1;
+  string base_url = 2;
+}
+
+message HostInfoResponse {
+  // Signing in with a code in the browser works (an OAuth app is set up for
+  // this host); otherwise the user creates a token.
+  bool device_login = 1;
+  // Where to create an access token, with the needed scopes preselected.
+  string token_url = 2;
+  string token_hint = 3;
+}
+
+message HostLoginStartRequest {
+  HostKind kind = 1;
+  string base_url = 2;
+}
+
+message HostLoginStartResponse {
+  string device_code = 1;
+  // Code the user enters at verification_url.
+  string user_code = 2;
+  string verification_url = 3;
+  // Seconds between polls.
+  int32 interval = 4;
+  int32 expires_in = 5;
+}
+
+message HostLoginPollRequest {
+  HostKind kind = 1;
+  string base_url = 2;
+  string device_code = 3;
+}
+
+message HostLoginPollResponse {
+  // Set once the user approved.
+  string token = 1;
+  // Still waiting for the user; poll again after interval seconds.
+  bool pending = 2;
+  int32 interval = 3;
+}
+
+message HostListReposRequest {
+  HostAccount account = 1;
+}
+
+message HostListReposResponse {
+  repeated HostRepo repos = 1;
+  // The signed-in user.
+  string user = 2;
+}
+
+message HostCreateRepoRequest {
+  HostAccount account = 1;
+  string name = 2;
+  bool private = 3;
+}
+
+message HostAddDeployKeyRequest {
+  HostAccount account = 1;
+  string full_name = 2;
+  string title = 3;
+  string public_key = 4;
+}
+
+message HostAddDeployKeyResponse {}
+
+message TagList {
+  repeated string tags = 1;
+}
+
+message SaveNoteResponse {
+  Note note = 1;
+  // The file had changed and the edits could not be merged line by line; the
+  // other version was saved as conflict_copy next to it.
+  string conflict_copy = 2;
+}
+
+message RenameNoteRequest {
+  string notebook_id = 1;
+  string path = 2;
+  // New path relative to the notebook root; moves between folders too.
+  string new_path = 3;
+}
+
+message DeleteNoteRequest {
+  string notebook_id = 1;
+  string path = 2;
+}
+
+message DeleteNoteResponse {}
+
+message CreateFolderRequest {
+  string notebook_id = 1;
+  string path = 2;
+}
+
+message CreateFolderResponse {}
+
+message ListTagsRequest {
+  string notebook_id = 1;
+}
+
+message Tag {
+  string name = 1;
+  int32 note_count = 2;
+}
+
+message ListTagsResponse {
+  repeated Tag tags = 1;
+}
+
+message SyncRequest {
+  string notebook_id = 1;
+}
+
+message SyncAllRequest {}
+
+message SyncAllResponse {
+  // Notebook id to its status after the sync.
+  map<string, SyncStatus> statuses = 1;
+}
+
+message GetSyncStatusRequest {
+  string notebook_id = 1;
+}
+
+enum SyncState {
+  SYNC_STATE_UNSPECIFIED = 0;
+  SYNC_STATE_IDLE = 1;
+  SYNC_STATE_SYNCING = 2;
+  SYNC_STATE_ERROR = 3;
+  // No remote configured.
+  SYNC_STATE_LOCAL_ONLY = 4;
+}
+
+message SyncStatus {
+  SyncState state = 1;
+  // Unix seconds of the last successful sync; 0 when never synced.
+  int64 last_sync = 2;
+  string error = 3;
+  // Local commits not pushed yet.
+  int32 ahead = 4;
+  // Files with uncommitted changes.
+  int32 pending_changes = 5;
+  // Notes that changed in the last sync, so the app can refresh them.
+  repeated string changed_paths = 6;
+  // Conflict copies the last sync created.
+  repeated string conflicts = 7;
+}

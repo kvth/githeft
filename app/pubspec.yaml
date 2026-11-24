@@ -1,0 +1,32 @@
+name: githeft
+description: Markdown notebooks synced with git.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.2.0
+  file_picker: ^13.4.1
+  fixnum: ^1.1.1
+  flutter_markdown_plus: ^1.0.12
+  grpc: ^5.2.0
+  image_picker: ^1.2.4
+  markdown: ^7.3.0
+  path: ^1.9.1
+  path_provider: ^2.1.6
+  protobuf: ^6.1.0
+  shared_preferences: ^2.5.3
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

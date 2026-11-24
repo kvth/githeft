@@ -1,0 +1,7 @@
+# Dart code for the app; protoc-gen-dart runs in the toolchain container.
+version: v2
+clean: true
+plugins:
+  - local: scripts/protoc-gen-dart
+    out: app/lib/gen
+    opt: grpc

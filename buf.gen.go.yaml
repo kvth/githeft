@@ -1,0 +1,10 @@
+# Go code for the core; needs protoc-gen-go and protoc-gen-connect-go on PATH.
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-connect-go
+    out: gen
+    opt: paths=source_relative
